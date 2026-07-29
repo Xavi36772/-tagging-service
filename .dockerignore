@@ -1,0 +1,10 @@
+dataset/
+cluster_results/
+__pycache__/
+*.pyc
+.env
+.git
+.gitignore
+generate_dataset.py
+train.py
+cluster.py
