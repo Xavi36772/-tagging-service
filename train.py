@@ -128,6 +128,8 @@ def main():
     parser.add_argument("--max-len", type=int, default=256, help="Longitud máxima de tokens")
     parser.add_argument("--output-dir", type=str, default="model", help="Directorio de salida del modelo")
     parser.add_argument("--resume", type=str, default=None, help="Reanudar desde checkpoint .pt/.bin")
+    parser.add_argument("--dynamic-weights", type=float, default=0.0,
+                        help="Peso dinámico por etiqueta basado en F1 (0=desactivado, sugerido: 2.0)")
     args = parser.parse_args()
 
     # Auto-resume: buscar checkpoint.pt primero, luego pytorch_model.bin
@@ -166,7 +168,9 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size)
 
-    criterion = nn.BCEWithLogitsLoss()
+    # Tag weights: inicialmente 1.0 para todos (sin peso)
+    tag_weights = torch.ones(len(taxonomy), device=device)
+    criterion = nn.BCEWithLogitsLoss(pos_weight=tag_weights)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
 
     total_steps = len(train_loader) * args.epochs
@@ -234,6 +238,18 @@ def main():
             torch.save(model.state_dict(), output_dir / "pytorch_model.bin")
             tokenizer.save_pretrained(output_dir)
             print(f"  -> Mejor modelo guardado (F1 Macro: {best_f1:.4f})")
+
+        # Actualizar pesos dinámicos para la siguiente época
+        if args.dynamic_weights > 0:
+            f1_vals = np.array([metrics["per_tag_f1"][t] for t in taxonomy])
+            # Tags con F1 bajo reciben más peso: weight = 1 + dynamic_weights * (1 - f1)
+            new_weights = 1.0 + args.dynamic_weights * (1.0 - torch.from_numpy(f1_vals).to(device))
+            # Suavizar cambios para evitar oscilaciones
+            tag_weights = 0.7 * tag_weights + 0.3 * new_weights
+            criterion.pos_weight = tag_weights
+            max_w = tag_weights.max().item()
+            min_w = tag_weights.min().item()
+            print(f"  Pesos dinámicos: [{min_w:.1f} - {max_w:.1f}]")
 
         # Top-5 peores etiquetas por F1
         sorted_tags = sorted(metrics["per_tag_f1"].items(), key=lambda x: x[1])
