@@ -1,0 +1,9 @@
+model/
+dataset/
+cluster_results/
+__pycache__/
+.git/
+.gitignore
+.gitattributes
+*.pyc
+.ipynb_checkpoints/
