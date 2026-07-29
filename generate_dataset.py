@@ -782,6 +782,12 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Save as train.json/val.json (for train.py) AND train_diverse.json (for reference)
+    with open(output_dir / "train.json", "w", encoding="utf-8") as f:
+        json.dump(train, f, ensure_ascii=False, indent=2)
+    with open(output_dir / "val.json", "w", encoding="utf-8") as f:
+        json.dump(val, f, ensure_ascii=False, indent=2)
+    # Also save with _diverse suffix for reference
     with open(output_dir / "train_diverse.json", "w", encoding="utf-8") as f:
         json.dump(train, f, ensure_ascii=False, indent=2)
     with open(output_dir / "val_diverse.json", "w", encoding="utf-8") as f:
