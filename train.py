@@ -127,8 +127,15 @@ def main():
     parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate")
     parser.add_argument("--max-len", type=int, default=256, help="Longitud máxima de tokens")
     parser.add_argument("--output-dir", type=str, default="model", help="Directorio de salida del modelo")
-    parser.add_argument("--resume", type=str, default=None, help="Reanudar desde checkpoint .bin")
+    parser.add_argument("--resume", type=str, default=None, help="Reanudar desde checkpoint .pt/.bin")
     args = parser.parse_args()
+
+    # Auto-resume: buscar checkpoint.pt primero, luego pytorch_model.bin
+    if args.resume is None:
+        ckpt = Path(args.output_dir) / "checkpoint.pt"
+        if ckpt.exists():
+            args.resume = str(ckpt)
+            print(f"Auto-resume detectado: {ckpt}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Dispositivo: {device}")
@@ -216,6 +223,10 @@ def main():
         print(f"  F1 Macro: {metrics['f1_macro']:.4f} | F1 Micro: {metrics['f1_micro']:.4f}")
         print(f"  Hamming Loss: {metrics['hamming_loss']:.4f}")
         print(f"  Precision Macro: {metrics['precision_macro']:.4f} | Recall Macro: {metrics['recall_macro']:.4f}")
+
+        # Guardar checkpoint por época (para reanudar si se interrumpe)
+        torch.save(model.state_dict(), output_dir / "checkpoint.pt")
+        print(f"  -> Checkpoint guardado")
 
         if metrics["f1_macro"] > best_f1:
             best_f1 = metrics["f1_macro"]
