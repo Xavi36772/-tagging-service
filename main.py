@@ -115,9 +115,10 @@ class PredictRequest(BaseModel):
 
 
 class PredictResponse(BaseModel):
-    tags: list[str]
-    probabilities: list[float]
-    all_probabilities: list[float]
+    tags: list[str] = []
+    probabilities: list[float] = []
+    all_probabilities: list[float] = []
+    error: str | None = None
 
 
 class PredictBatchRequest(BaseModel):
@@ -156,7 +157,7 @@ def health():
 @app.post("/predict-tags", response_model=PredictResponse)
 def predict_tags(req: PredictRequest):
     if state.model is None:
-        raise HTTPException(503, "Modelo no cargado. Ejecuta train.py primero.")
+        return PredictResponse(error="Modelo no cargado. Ejecuta train.py primero.")
 
     if not req.synopsis.strip():
         raise HTTPException(400, "La sinopsis no puede estar vacía")
