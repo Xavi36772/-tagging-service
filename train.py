@@ -217,7 +217,7 @@ def main():
             # Guardar mejor modelo
             torch.save(model.state_dict(), output_dir / "pytorch_model.bin")
             tokenizer.save_pretrained(output_dir)
-            print(f"  → Mejor modelo guardado (F1 Macro: {best_f1:.4f})")
+            print(f"  -> Mejor modelo guardado (F1 Macro: {best_f1:.4f})")
 
         # Top-5 peores etiquetas por F1
         sorted_tags = sorted(metrics["per_tag_f1"].items(), key=lambda x: x[1])

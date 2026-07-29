@@ -1,8 +1,5 @@
-model/*
-!model/.gitkeep
 dataset/
 cluster_results/
 __pycache__/
 *.pyc
 .env
-*.npy
