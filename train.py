@@ -127,6 +127,7 @@ def main():
     parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate")
     parser.add_argument("--max-len", type=int, default=256, help="Longitud máxima de tokens")
     parser.add_argument("--output-dir", type=str, default="model", help="Directorio de salida del modelo")
+    parser.add_argument("--resume", type=str, default=None, help="Reanudar desde checkpoint .bin")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -147,6 +148,10 @@ def main():
     # Tokenizer + modelo
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     model = BETOMultiLabel(args.model_name, len(taxonomy)).to(device)
+
+    if args.resume:
+        model.load_state_dict(torch.load(args.resume, map_location=device, weights_only=True))
+        print(f"Reanudando desde {args.resume}")
 
     train_dataset = TagDataset(train_data, tokenizer, tag2idx, args.max_len)
     val_dataset = TagDataset(val_data, tokenizer, tag2idx, args.max_len)
