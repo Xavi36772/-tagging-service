@@ -288,4 +288,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-""", "Description": "Script to generate targeted Groq synopses for weak tags with genre-specific prompting hints"
