@@ -21,6 +21,28 @@ from transformers import (
 from sklearn.metrics import f1_score, hamming_loss, precision_score, recall_score
 
 
+# ── Focal Loss ────────────────────────────────────────────────────────
+class FocalLoss(nn.Module):
+    """Focal Loss for multi-label classification.
+    Down-weights easy examples so training focuses on hard/rare tags.
+    """
+    def __init__(self, gamma: float = 2.0, pos_weight: torch.Tensor | None = None):
+        super().__init__()
+        self.gamma = gamma
+        self.pos_weight = pos_weight
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        bce = nn.functional.binary_cross_entropy_with_logits(
+            logits, targets, reduction="none",
+            pos_weight=self.pos_weight,
+        )
+        probs = torch.sigmoid(logits)
+        p_t = probs * targets + (1 - probs) * (1 - targets)
+        focal_weight = (1 - p_t) ** self.gamma
+        loss = focal_weight * bce
+        return loss.mean()
+
+
 class TagDataset(Dataset):
     def __init__(self, data, tokenizer, tag2idx, max_len=256):
         self.texts = [item["synopsis"] for item in data]
@@ -52,17 +74,36 @@ class TagDataset(Dataset):
 
 
 class BETOMultiLabel(nn.Module):
-    def __init__(self, model_name: str, num_labels: int):
+    """BETO with a deeper classifier head.
+    CLS → Dense(768→512) → GELU → Dropout → Dense(512→num_labels)
+    """
+    def __init__(self, model_name: str, num_labels: int, hidden_dim: int = 512):
         super().__init__()
         self.bert = AutoModel.from_pretrained(model_name)
-        self.dropout = nn.Dropout(0.3)
-        self.classifier = nn.Linear(self.bert.config.hidden_size, num_labels)
+        bert_dim = self.bert.config.hidden_size
+        self.head = nn.Sequential(
+            nn.Linear(bert_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(0.3),
+            nn.Linear(hidden_dim, num_labels),
+        )
+        # Multi-sample dropout for regularization during training
+        self._dropouts = nn.ModuleList([nn.Dropout(0.2) for _ in range(5)])
+        self.classifier_out = nn.Linear(bert_dim, num_labels)  # only for multisample path
+        self.hidden_dim = hidden_dim
+        self.use_multisample = False  # toggled during training
 
     def forward(self, input_ids, attention_mask):
         outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-        pooled = outputs.last_hidden_state[:, 0, :]  # [CLS] token
-        pooled = self.dropout(pooled)
-        logits = self.classifier(pooled)
+        cls_output = outputs.last_hidden_state[:, 0, :]  # [CLS] token
+
+        if self.training and self.use_multisample:
+            # Average logits from multiple dropout masks for regularization
+            logits = torch.stack(
+                [self.head(d(cls_output)) for d in self._dropouts], dim=0
+            ).mean(dim=0)
+        else:
+            logits = self.head(cls_output)
         return logits
 
 
@@ -130,6 +171,12 @@ def main():
     parser.add_argument("--resume", type=str, default=None, help="Reanudar desde checkpoint .pt/.bin")
     parser.add_argument("--dynamic-weights", type=float, default=0.0,
                         help="Peso dinámico por etiqueta basado en F1 (0=desactivado, sugerido: 2.0)")
+    parser.add_argument("--focal-loss", action="store_true",
+                        help="Usar Focal Loss en lugar de BCE (recomendado para tags desbalanceados)")
+    parser.add_argument("--focal-gamma", type=float, default=2.0,
+                        help="Gamma para Focal Loss (default: 2.0, mayor = más énfasis en tags difíciles)")
+    parser.add_argument("--multisample-dropout", action="store_true",
+                        help="Usar multisample dropout para regularización")
     args = parser.parse_args()
 
     # Auto-resume: buscar checkpoint.pt primero, luego pytorch_model.bin
@@ -170,7 +217,17 @@ def main():
 
     # Tag weights: inicialmente 1.0 para todos (sin peso)
     tag_weights = torch.ones(len(taxonomy), device=device)
-    criterion = nn.BCEWithLogitsLoss(pos_weight=tag_weights)
+
+    if args.focal_loss:
+        criterion = FocalLoss(gamma=args.focal_gamma, pos_weight=tag_weights)
+        print(f"Usando Focal Loss con gamma={args.focal_gamma}")
+    else:
+        criterion = nn.BCEWithLogitsLoss(pos_weight=tag_weights)
+
+    if args.multisample_dropout:
+        model.use_multisample = True
+        print("Multisample dropout activado")
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
 
     total_steps = len(train_loader) * args.epochs
@@ -246,7 +303,10 @@ def main():
             new_weights = 1.0 + args.dynamic_weights * (1.0 - torch.from_numpy(f1_vals).to(device))
             # Suavizar cambios para evitar oscilaciones
             tag_weights = 0.7 * tag_weights + 0.3 * new_weights
-            criterion.pos_weight = tag_weights
+            if args.focal_loss:
+                criterion.pos_weight = tag_weights
+            else:
+                criterion.pos_weight = tag_weights
             max_w = tag_weights.max().item()
             min_w = tag_weights.min().item()
             print(f"  Pesos dinámicos: [{min_w:.1f} - {max_w:.1f}]")

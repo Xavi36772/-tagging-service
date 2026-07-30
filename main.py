@@ -38,17 +38,29 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # ── Modelo (igual que en train.py) ────────────────────────────────────
 class BETOMultiLabel(nn.Module):
-    def __init__(self, model_name: str, num_labels: int):
+    """BETO with a deeper classifier head.
+    CLS → Dense(768→512) → GELU → Dropout → Dense(512→num_labels)
+    """
+    def __init__(self, model_name: str, num_labels: int, hidden_dim: int = 512):
         super().__init__()
         self.bert = AutoModel.from_pretrained(model_name)
-        self.dropout = nn.Dropout(0.3)
-        self.classifier = nn.Linear(self.bert.config.hidden_size, num_labels)
+        bert_dim = self.bert.config.hidden_size
+        self.head = nn.Sequential(
+            nn.Linear(bert_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(0.3),
+            nn.Linear(hidden_dim, num_labels),
+        )
+        # Multi-sample dropout (only active during training in train.py)
+        self._dropouts = nn.ModuleList([nn.Dropout(0.2) for _ in range(5)])
+        self.classifier_out = nn.Linear(bert_dim, num_labels)
+        self.hidden_dim = hidden_dim
+        self.use_multisample = False
 
     def forward(self, input_ids, attention_mask, **kwargs):
         outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-        pooled = outputs.last_hidden_state[:, 0, :]
-        pooled = self.dropout(pooled)
-        logits = self.classifier(pooled)
+        cls_output = outputs.last_hidden_state[:, 0, :]
+        logits = self.head(cls_output)
         return logits
 
 
