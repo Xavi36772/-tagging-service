@@ -26,14 +26,20 @@ class FocalLoss(nn.Module):
     """Focal Loss for multi-label classification.
     Down-weights easy examples so training focuses on hard/rare tags.
     """
-    def __init__(self, gamma: float = 2.0, pos_weight: torch.Tensor | None = None):
+    def __init__(self, gamma: float = 2.0, pos_weight: torch.Tensor | None = None, label_smoothing: float = 0.0):
         super().__init__()
         self.gamma = gamma
         self.pos_weight = pos_weight
+        self.label_smoothing = label_smoothing
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        if self.label_smoothing > 0:
+            smoothed_targets = targets * (1.0 - self.label_smoothing) + 0.5 * self.label_smoothing
+        else:
+            smoothed_targets = targets
+
         bce = nn.functional.binary_cross_entropy_with_logits(
-            logits, targets, reduction="none",
+            logits, smoothed_targets, reduction="none",
             pos_weight=self.pos_weight,
         )
         probs = torch.sigmoid(logits)
@@ -177,6 +183,10 @@ def main():
                         help="Gamma para Focal Loss (default: 2.0, mayor = más énfasis en tags difíciles)")
     parser.add_argument("--multisample-dropout", action="store_true",
                         help="Usar multisample dropout para regularización")
+    parser.add_argument("--weight-decay", type=float, default=0.1,
+                        help="Weight decay para regularización en AdamW (default: 0.1)")
+    parser.add_argument("--label-smoothing", type=float, default=0.1,
+                        help="Label smoothing para prevenir overfitting (default: 0.1)")
     args = parser.parse_args()
 
     # Auto-resume: buscar checkpoint.pt primero, luego pytorch_model.bin
@@ -219,16 +229,18 @@ def main():
     tag_weights = torch.ones(len(taxonomy), device=device)
 
     if args.focal_loss:
-        criterion = FocalLoss(gamma=args.focal_gamma, pos_weight=tag_weights)
-        print(f"Usando Focal Loss con gamma={args.focal_gamma}")
+        criterion = FocalLoss(gamma=args.focal_gamma, pos_weight=tag_weights, label_smoothing=args.label_smoothing)
+        print(f"Usando Focal Loss con gamma={args.focal_gamma} y label_smoothing={args.label_smoothing}")
     else:
-        criterion = nn.BCEWithLogitsLoss(pos_weight=tag_weights)
+        criterion = nn.BCEWithLogitsLoss(pos_weight=tag_weights, label_smoothing=args.label_smoothing)
+        print(f"Usando BCE con label_smoothing={args.label_smoothing}")
 
     if args.multisample_dropout:
         model.use_multisample = True
         print("Multisample dropout activado")
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    print(f"AdamW weight decay ajustado a {args.weight_decay}")
 
     total_steps = len(train_loader) * args.epochs
     scheduler = get_linear_schedule_with_warmup(
